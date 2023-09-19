@@ -1350,7 +1350,7 @@ Function Install-LTService{
                     Write-Verbose "No Proxy Configuration has been specified - Continuing."
                 }#End If
                 If (!($NoWait) -and $PSCmdlet.ShouldProcess("LTService","Monitor For Successful Agent Registration") ) {
-                    $timeout = new-timespan -Minutes 3
+                    $timeout = new-timespan -Minutes 6
                     $sw = [diagnostics.stopwatch]::StartNew()
                     Write-Host -NoNewline "Waiting for agent to register."
                     Do {
