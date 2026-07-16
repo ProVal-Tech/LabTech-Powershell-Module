@@ -1,12 +1,15 @@
 ﻿# LabTech-Powershell-Module
-This is an attempt to create a comprehensive LT PoSH module. 
+
+This is an attempt to create a comprehensive LT PoSH module.
 To import this module in your scripts you can run:
-```
-(new-object Net.WebClient).DownloadString('https://bit.ly/LTPoSh') | iex
+
+```PowerShell
+$ProgressPreference = 'SilentlyContinue'
+[System.Net.ServicePointManager]::SecurityProtocol = 3072 -bor 12288
+. ([scriptblock]::Create(((Invoke-RestMethod -Uri 'https://contentrepo.net/repo/script/LabTech.psm1') -join [Environment]::NewLine)))
 ```
 
 # Functions
-
 
 [ConvertFrom-LTSecurity](LabTech/ConvertFrom-LTSecurity.md)
 
@@ -57,4 +60,3 @@ To import this module in your scripts you can run:
 [Uninstall-LTService](LabTech/Uninstall-LTService.md)
 
 [Update-LTService](LabTech/Update-LTService.md)
-

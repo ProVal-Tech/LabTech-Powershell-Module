@@ -11,7 +11,7 @@
     Tested Versions: v10.5-v12, v2019-v2024
 
 .NOTES
-    Version:        1.9.2
+    Version:        1.9.3
     Author:         Chris Taylor
     Website:        labtechconsulting.com
     Creation Date:  3/14/2016
@@ -43,7 +43,7 @@ If (-not ($PSVersionTable)) {Write-Warning 'PS1 Detected. PowerShell Version 2.0
 ElseIf ($PSVersionTable.PSVersion.Major -lt 3 ) {Write-Verbose 'PS2 Detected. PowerShell Version 3.0 or higher may be required for full functionality.'}
 
 #Module Version
-$ModuleVersion = "1.9.2"
+$ModuleVersion = "1.9.3"
 $ModuleGuid='f1f06c84-00c8-11ea-b6e8-000c29aaa7df'
 
 If ($env:PROCESSOR_ARCHITEW6432 -match '64' -and [IntPtr]::Size -ne 8 -and $env:PROCESSOR_ARCHITEW6432 -ne 'ARM64') {
@@ -143,6 +143,7 @@ Function Get-LTServiceInfo{
     Param ()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
         Clear-Variable key,BasePath,exclude,Servers -EA 0 -WhatIf:$False -Confirm:$False #Clearing Variables for use
         $exclude = "PSParentPath","PSChildName","PSDrive","PSProvider","PSPath"
@@ -216,6 +217,7 @@ Function Get-LTServiceSettings{
     Param ()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Verbose "Checking for registry keys."
         if ((Test-Path 'HKLM:\SOFTWARE\LabTech\Service\Settings') -eq $False){
             Write-Error "ERROR: Unable to find LTSvc settings. Make sure the agent is installed."
@@ -268,6 +270,7 @@ Function Restart-LTService{
     Param()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
     }#End Begin
 
@@ -339,6 +342,7 @@ Function Stop-LTService{
     Param()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Clear-Variable sw,timeout,svcRun -EA 0 -WhatIf:$False -Confirm:$False -Verbose:$False #Clearing Variables for use
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
     }#End Begin
@@ -437,6 +441,7 @@ Function Start-LTService{
     Param()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
         #Identify processes that are using the tray port
         [array]$processes = @()
@@ -603,6 +608,9 @@ Function Uninstall-LTService{
     Update Date: 7/25/2024
     Purpose/Change: Uninstaller EXE fallback even if server is unavailable
 
+    Update Date: 2/2/2026
+    Purpose/Change: Added logic to remove Uninstall.exe and Uninstall.exe.config from temp directory before downloading and running Agent_Uninstall.exe
+
 .LINK
     http://labtechconsulting.com
 #>
@@ -644,16 +652,17 @@ Function Uninstall-LTService{
         If (-not ($BasePath)) {$BasePath = "${env:windir}\LTSVC"}
         $UninstallBase="${env:windir}\Temp"
         $UninstallEXE='Agent_Uninstall.exe'
+        $UninstallEXEExtracted='Uninstall.exe'
+        $UninstallConfigExtracted='Uninstall.exe.config'
         $UninstallMSI='RemoteAgent.msi'
 
         if (Test-Path -Path $UninstallBase) {
-                (taskkill.exe /f /im uninstall.exe) 2>&1 3>&1 1>$null
-                (taskkill.exe /f /im Agent_Uninstall.exe) 2>&1 3>&1 1>$null
-                Get-ChildItem -Path $UninstallBase -Recurse -Force -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -in @('Uninstall.exe', 'Uninstall.exe.config','Agent_Uninstall.exe') } |
-                Remove-Item -Force -ErrorAction SilentlyContinue -WhatIf:$False -Confirm:$False -Debug:$False| Out-Null
+            (taskkill.exe /f /im uninstall.exe) 2>&1 3>&1 1>$null
+            (taskkill.exe /f /im Agent_Uninstall.exe) 2>&1 3>&1 1>$null
+            Get-ChildItem -Path $UninstallBase -Recurse -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -in @('Uninstall.exe', 'Uninstall.exe.config','Agent_Uninstall.exe') } |
+            Remove-Item -Force -ErrorAction SilentlyContinue -WhatIf:$False -Confirm:$False -Debug:$False | Out-Null
         }
-
 
         New-PSDrive HKU Registry HKEY_USERS -ErrorAction SilentlyContinue -WhatIf:$False -Confirm:$False -Debug:$False| Out-Null
         $regs = @( 'Registry::HKEY_LOCAL_MACHINE\Software\LabTechMSP',
@@ -810,6 +819,7 @@ Function Uninstall-LTService{
                 If ((Test-Path "$UninstallBase\$UninstallEXE")) {
                     If(((Get-Item "$UninstallBase\$UninstallEXE" -EA 0).length/1KB -gt 80)) {
                         $GoodServer='https://s3.amazonaws.com'
+                        $SVer='260.001'
                     } Else {
                         Write-Warning "Line $(LINENUM): $UninstallEXE size is below normal. Removing suspected corrupt file."
                         Remove-Item "$UninstallBase\$UninstallEXE" -ErrorAction SilentlyContinue -Force -Confirm:$False   
@@ -854,14 +864,26 @@ Function Uninstall-LTService{
                         Write-Verbose "WARNING: $UninstallBase\$UninstallMSI was not found."
                     }
                 }#End If
-
+                
                 If ($PSCmdlet.ShouldProcess("$UninstallBase\$UninstallEXE", "Execute Agent Uninstall")) {
                     If ((Test-Path "$UninstallBase\$UninstallEXE")) {
                         #Run $UninstallEXE
                         Write-Verbose "Launching Agent Uninstaller"
                         Write-Debug "Line $(LINENUM): Executing Command ""$UninstallBase\$UninstallEXE"""
-                        Start-Process -Wait -FilePath "$UninstallBase\$UninstallEXE" -WorkingDirectory $UninstallBase
-                        Start-Sleep -Seconds 5
+                        If (!([System.Version]$SVer -ge [System.Version]'250.001')) {
+                            Start-Process -Wait -FilePath "$UninstallBase\$UninstallEXE" -WorkingDirectory $UninstallBase
+                            Start-Sleep -Seconds 5
+                        } Else {
+                            #Agent Uninstaller format changed in Automate 2025
+                            #Cleanup old Uninstall.exe and Unisntall.exe.config file. Agent_Uninstall.exe will ask to overwrite if Uninstall.exe or Unisntall.exe.config file is present.
+                            Remove-Item "$UninstallBase\$UninstallEXEExtracted" -ErrorAction SilentlyContinue -Force -Confirm:$False
+                            Remove-Item "$UninstallBase\$UninstallConfigExtracted" -ErrorAction SilentlyContinue -Force -Confirm:$False
+                            Start-Process -Wait -FilePath "$UninstallBase\$UninstallEXE" -WorkingDirectory $UninstallBase
+                            Try {
+                                Start-Process -Wait -FilePath "$UninstallBase\$UninstallEXEExtracted" -WorkingDirectory $UninstallBase
+                            } Catch {}
+                            Start-Sleep -Seconds 5
+                        }
                     } Else {
                         Write-Verbose "WARNING: $UninstallBase\$UninstallEXE was not found."
                     }
@@ -934,7 +956,7 @@ Function Uninstall-LTService{
 
         If ($WhatIfPreference -ne $True) {
             #Cleanup uninstall files
-            Remove-Item "$UninstallBase\$UninstallEXE","$UninstallBase\$UninstallMSI" -ErrorAction SilentlyContinue -Force -Confirm:$False
+            Remove-Item "$UninstallBase\$UninstallEXEExtracted","$UninstallBase\$UninstallConfigExtracted","$UninstallBase\$UninstallEXE","$UninstallBase\$UninstallMSI" -ErrorAction SilentlyContinue -Force -Confirm:$False
         }#End If
 
         Write-Debug "Exiting $($myInvocation.InvocationName) at line $(LINENUM)"
@@ -1327,8 +1349,6 @@ Function Install-LTService{
                 "/l `"$InstallBase\$logfile.log`""
                 ) | Where-Object {$_}) -join ' '
 
-            (taskkill /f /im msiexec.exe) 3>&1 2>&1 1>$null
-
             Try{
                 If ( $PSCmdlet.ShouldProcess("msiexec.exe $($iarg)", "Execute Install") ) {
                     $InstallAttempt=0
@@ -1558,6 +1578,7 @@ Function Redo-LTService{
     )
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Clear-Variable PasswordArg, RenameArg, Svr, ServerList, Settings -EA 0 -WhatIf:$False -Confirm:$False #Clearing Variables for use
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
 
@@ -1711,6 +1732,7 @@ Function Update-LTService{
     )
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
         Clear-Variable Svr, GoodServer, Settings -EA 0 -WhatIf:$False -Confirm:$False #Clearing Variables for use
         $Settings = Get-LTServiceInfo -EA 0 -Verbose:$False -WhatIf:$False -Confirm:$False
@@ -1949,6 +1971,7 @@ Function Get-LTErrors{
     Param()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
         $BasePath = $(Get-LTServiceInfo -EA 0 -Verbose:$False -WhatIf:$False -Confirm:$False -Debug:$False|Select-Object -Expand BasePath -EA 0)
         if (!$BasePath){$BasePath = "${env:windir}\LTSVC"}
@@ -2060,6 +2083,7 @@ Function Reset-LTService{
     )
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
 
         $Reg = 'HKLM:\Software\LabTech\Service'
@@ -2170,6 +2194,7 @@ Function Hide-LTAddRemove{
     Param()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
         $RegRoots = ('HKLM:\SOFTWARE\Classes\Installer\Products\C4D064F3712D4B64086B5BDE05DBC75F',
         'HKLM:\SOFTWARE\Classes\Installer\Products\D1003A85576B76D45A1AF09A0FC87FAC')
@@ -2276,6 +2301,7 @@ Function Show-LTAddRemove{
     Param()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
         $RegRoots = ('HKLM:\SOFTWARE\Classes\Installer\Products\C4D064F3712D4B64086B5BDE05DBC75F',
         'HKLM:\SOFTWARE\Classes\Installer\Products\D1003A85576B76D45A1AF09A0FC87FAC')
@@ -2415,6 +2441,7 @@ Function Test-LTPorts{
     )
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Function Private:TestPort{
         Param(
             [parameter(Position=0)]
@@ -2561,6 +2588,7 @@ Function Get-LTLogging{
     Param ()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Verbose "Checking for registry keys."
     }#End Begin
 
@@ -2614,9 +2642,10 @@ Function Set-LTLogging{
     )
 
     Begin{
-    if ($Normal -ne $true -and $Verbose -ne $true ){
-        Write-Error "ERROR: Line $(LINENUM): Please provide a logging level. -Normal or -Verbose" -ErrorAction Stop
-    }
+        $ProgressPreference='SilentlyContinue'
+        if ($Normal -ne $true -and $Verbose -ne $true ){
+            Write-Error "ERROR: Line $(LINENUM): Please provide a logging level. -Normal or -Verbose" -ErrorAction Stop
+        }
     }#End Begin
 
     Process{
@@ -2679,6 +2708,7 @@ Function Get-LTProbeErrors{
     Param()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
         $BasePath = $(Get-LTServiceInfo -EA 0 -Verbose:$False -WhatIf:$False -Confirm:$False -Debug:$False|Select-Object -Expand BasePath -EA 0)
         if (!($BasePath)){$BasePath = "${env:windir}\LTSVC"}
@@ -2747,6 +2777,7 @@ Function New-LTServiceBackup{
     Param ()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Clear-Variable LTPath,BackupPath,Keys,Path,Result,Reg,RegPath -EA 0 -WhatIf:$False -Confirm:$False #Clearing Variables for use
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
 
@@ -2833,6 +2864,7 @@ Function Get-LTServiceInfoBackup{
     Param ()
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Write-Verbose "Checking for registry keys."
         $exclude = "PSParentPath","PSChildName","PSDrive","PSProvider","PSPath"
     }#End Begin
@@ -2906,6 +2938,7 @@ Function Rename-LTAddRemove{
     )
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         $RegRoots = ('HKLM:\SOFTWARE\Classes\Installer\Products\C4D064F3712D4B64086B5BDE05DBC75F',
         'HKLM:\SOFTWARE\Classes\Installer\Products\D1003A85576B76D45A1AF09A0FC87FAC')
         $PublisherRegRoots = ('HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{58A3001D-B675-4D67-A5A1-0FA9F08CF7CA}',
@@ -3617,6 +3650,7 @@ Function Get-LTProxy{
     )
 
     Begin{
+        $ProgressPreference='SilentlyContinue'
         Clear-Variable CustomProxyObject,LTSI,LTSS -EA 0 -WhatIf:$False -Confirm:$False #Clearing Variables for use
         Write-Debug "Starting $($myInvocation.InvocationName) at line $(LINENUM)"
         Write-Verbose "Discovering Proxy Settings used by the LT Agent."
@@ -3785,10 +3819,10 @@ if ($PSCommandPath -like '*.ps1' -and $PSCommandPath -like "*$($MyInvocation.MyC
 }
 
 # SIG # Begin signature block
-# MIIlqQYJKoZIhvcNAQcCoIIlmjCCJZYCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIlqAYJKoZIhvcNAQcCoIIlmTCCJZUCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDZBip24xcGAT9j
-# JmpnjosPwNEjM84tBDxDdeq1vXy/GqCCEvMwggXdMIIDxaADAgECAgh7LJvTFoAy
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCuGXBuKyP109sT
+# 35ydc63jRPVtLr9glCjeS5Red0YChKCCEvMwggXdMIIDxaADAgECAgh7LJvTFoAy
 # mTANBgkqhkiG9w0BAQsFADB8MQswCQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMx
 # EDAOBgNVBAcMB0hvdXN0b24xGDAWBgNVBAoMD1NTTCBDb3Jwb3JhdGlvbjExMC8G
 # A1UEAwwoU1NMLmNvbSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IFJTQTAe
@@ -3854,11 +3888,11 @@ if ($PSCommandPath -like '*.ps1' -and $PSCommandPath -like "*$($MyInvocation.MyC
 # nnXp4NqnycwsO3tMCnjPlPc2YLaDPIpUy04NaCqUEXUmFOogN8zreRd2VXhxbeJJ
 # ODM32+RsWccjYua8zi5US/1eAyrI3R5LcUTQdT4xYmWLKabtJOF6HYQ0f6QXfLSs
 # fT81WMvDvxrdn1RWbUXlU/OIiisxo8o+UNEANOwnCMNnxlzoaL/PLhZluDxm/zuy
-# lauajZ3MlPDteFB/7GRHo50wggaYMIIEgKADAgECAhAZraEDEXkpAS0+li99ndmf
+# lauajZ3MlPDteFB/7GRHo50wggaYMIIEgKADAgECAhBVwCSN2uOPeP7iNFdxurkC
 # MA0GCSqGSIb3DQEBCwUAMHgxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQ
 # MA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxNDAyBgNVBAMMK1NT
-# TC5jb20gQ29kZSBTaWduaW5nIEludGVybWVkaWF0ZSBDQSBSU0EgUjEwHhcNMjQw
-# ODEyMTg1NDI0WhcNMjUwOTA2MTg1NDI0WjB/MQswCQYDVQQGEwJVUzEQMA4GA1UE
+# TC5jb20gQ29kZSBTaWduaW5nIEludGVybWVkaWF0ZSBDQSBSU0EgUjEwHhcNMjUw
+# ODExMTY0MDM4WhcNMjYwODEzMTY0MDM4WjB/MQswCQYDVQQGEwJVUzEQMA4GA1UE
 # CAwHRmxvcmlkYTEaMBgGA1UEBwwRQWx0YW1vbnRlIFNwcmluZ3MxIDAeBgNVBAoM
 # F1Byb3ZhbCBUZWNobm9sb2dpZXMgSW5jMSAwHgYDVQQDDBdQcm92YWwgVGVjaG5v
 # bG9naWVzIEluYzCCAaIwDQYJKoZIhvcNAQEBBQADggGPADCCAYoCggGBAKr0IQn+
@@ -3878,65 +3912,65 @@ if ($PSCommandPath -like '*.ps1' -and $PSCommandPath -like "*$($MyInvocation.MyC
 # d3d3LnNzbC5jb20vcmVwb3NpdG9yeTATBgNVHSUEDDAKBggrBgEFBQcDAzBNBgNV
 # HR8ERjBEMEKgQKA+hjxodHRwOi8vY3Jscy5zc2wuY29tL1NTTGNvbS1TdWJDQS1D
 # b2RlU2lnbmluZy1SU0EtNDA5Ni1SMS5jcmwwHQYDVR0OBBYEFFD+6iHV3C018c3s
-# o1Yy1la03bfgMA4GA1UdDwEB/wQEAwIHgDANBgkqhkiG9w0BAQsFAAOCAgEACS71
-# 1+k93Ta8cJheWDeZC08n9+K/SmnKCPnp9fKAXZGg0pSpDg3aSUJUoAcDURP4pww4
-# 7l8bhg2S8mtQIEKjDsMq3zsafUkP/GIfvQDRsSyCj/DWMn8AZ+1bjq/8uK+nlb3n
-# NiRw1MpG8p3gPgCxmz0u++TYBCKGsgixZ02qJgyEqD8fME+fuVL9qNdbQmawixVf
-# SuWQoilK0/AVarnTa6X+cr6DGhOE4ry2kIwAVv5/q+PzgxHthqIxI+o7y2KzGcla
-# w1LKclFsf0CZe9Abk3BMSLY2DnIYhdCurGHJkemFKKR2SocVzSr/UvxWPIk9Zcs4
-# mgxFRKrsCZwkRP6AkPYm1EOgbFATgwRCGGxl6bjZ0OxAbW39bpYeH33FGL6nV8yf
-# WNonuvA/BUAqwoGPsBLWhiXcEVL1SpxRXvIwOv34Y9kZ29f+uxhIrP8S3fWkTz7k
-# AS6vwXLL7woQsol5vtx1IcjEd9oeh6vlxOOzUFsSRmquH5cdwNeI6+7mz9h7oK7H
-# 2hijT2kQdOZ9twkEsvvraqGTyn0C2U9ZLoN+V7tUQDh4dBCw8l1k+ynopjnzZ2aG
-# VdSgq47PYPy3hhHfqyxczg+STd4GppaNh1MZb8/5s70ltLuqLhrzEikI3Q6erstb
-# 2Ct/iDSjl+H3XK1fA7fZLkH/bbvkxYugmgNp1kgxghIMMIISCAIBATCBjDB4MQsw
+# o1Yy1la03bfgMA4GA1UdDwEB/wQEAwIHgDANBgkqhkiG9w0BAQsFAAOCAgEABh47
+# CluH23DIUb+EEbxAqBHOmFDZGkh9rDcspOuce8H7iDRuSfZeChrMdJMiNLQwbATh
+# 0AKPVDzfXHgIiGwDjgQrPazLUJ+bZlo1enDtU2Npo0Np6WGCjswjo6Et5Xf0UL7h
+# vUjeN9a/yJSpb5tQ7Tl3zZ4xGDt5k9SCj/ErGiwoZd00fJ9Il6mbGjDoW5k8RVP7
+# Mw6oP1KQ/qVJfc8RZwbaI7x/ZdPGliy7CJ//Ec1ZTzIuuuU3kClHtSxwNr7VHL0k
+# uo1db3JQizTmNgncJFNM6/NH86B9p9ogPROgj/di5Cd7259wCgoUr/H8uZ5JvqwN
+# JYDyZwbsq4pSnAh5nk01zayn6qED9myhWNHORekEszcp3gsPAvc3VuyWhixjXMr0
+# Npfxr09WmUy4mR2dNiYEUpkOckEMER8liloPF10pTRsqz5QD9/vM/XkgS0xQUfg/
+# Qd2t2aid/KHKDa8PdAXtQ0GJHfxo8H3xIyuDKOs2U8XdeT+JQKdZ0MTl54dSJ1QA
+# pPf1jESysT+/SS+ndS61Q9v3DDfViFEmMWUqgN6KlGvszv271a6PMyPipmsn0w6S
+# T9gnT2w6XxtNZQnjiLJCMO86XjUh2NKK7o2W3l9cdR2sb5+NRSUU4n3MbA4Mlc9p
+# M8GqIJ7wG4YvRAuw7ZXRPzIdwV9u0/hhGLNiLa0xghILMIISBwIBATCBjDB4MQsw
 # CQYDVQQGEwJVUzEOMAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAP
 # BgNVBAoMCFNTTCBDb3JwMTQwMgYDVQQDDCtTU0wuY29tIENvZGUgU2lnbmluZyBJ
-# bnRlcm1lZGlhdGUgQ0EgUlNBIFIxAhAZraEDEXkpAS0+li99ndmfMA0GCWCGSAFl
+# bnRlcm1lZGlhdGUgQ0EgUlNBIFIxAhBVwCSN2uOPeP7iNFdxurkCMA0GCWCGSAFl
 # AwQCAQUAoIGvMBQGCisGAQQBgjcCAQwxBjAEoQKAADAZBgkqhkiG9w0BCQMxDAYK
 # KwYBBAGCNwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAtBgkqhkiG
 # 9w0BCTQxIDAeMA0GCWCGSAFlAwQCAQUAoQ0GCSqGSIb3DQEBCwUAMC8GCSqGSIb3
-# DQEJBDEiBCDBr/PaGnKv03A72worglc5JBxGSaCdGIMOjhTt5HEPSDANBgkqhkiG
-# 9w0BAQsFAASCAYBcwoOME+qjHUJQ1XP9/aGM2Nk2qTZCu97q8bJkrmkXVZb8qdgL
-# 2j5xlkuBBvUG124/mM3Smg+3i0YzDSQ7RCkBMQbYlwzSq+e5q8Ti10Kx8Pm+oByk
-# vMxAoApf9JJqKS5h6UDXx8nRp9ExobRtXVEihj6OdWWKFtrXGpZ7VPcY2rtJZ/lh
-# ChLXgcVEMeEnx8DoY+pvq0B1kmYN0+FntqQpdywseDj5XdA800IIEfoFuMegbA4O
-# huZGSeHg6hqmUMQBMeZLflf5H9kTtP4H5SejUTJoRvhrNIAnGlpKCCbwIRijSjq7
-# /zQFzMCnXQB5bnPK1B7sOrF1lL89agD6zxrxh1AWRx7pUhbZgqO2HvbA91KKUGQ4
-# fRxoW0GV3OCY/Mttwweja993O14orSZneTy0T4lE9Si0sIb5A9P5Cdk8xrL9Nho+
-# fwx0xgdYcRF+4yBSUsGPtICjhSY1L4zcF4gVsNpsLJRm4At5Z3xVHJkTP1/tQn2z
-# qlTyZGFLHUBv7HKhgg8eMIIPGgYKKwYBBAGCNwMDATGCDwowgg8GBgkqhkiG9w0B
-# BwKggg73MIIO8wIBAzENMAsGCWCGSAFlAwQCATB/BgsqhkiG9w0BCRABBKBwBG4w
-# bAIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUDBAIBBQAEIB5S32wU1E6/ezCy
-# VbaXWR2X6U19vNor/SCgcaW7FjTfAggLid20r1xgPRgPMjAyNDA4MzAxNDEyNTJa
-# MAMCAQECBgGRo6HMT6CCDAAwggT8MIIC5KADAgECAhBaWqzoGjVutGKGjVd94D3H
+# DQEJBDEiBCDgVnYLn+CbDgq8cvxivh5w15TUAQsKCl47jcuwGxa6ETANBgkqhkiG
+# 9w0BAQsFAASCAYBsNUK0D5p/VyAl3kRaiBKqjUHdr9WD9vv/vRcqzkKXdKzhrhX5
+# 0bGgJojS+cpNxms8TUO/NdvGaYxBSGhxxXCl9n+IsIH1Bjq3mpEAXRgqkdmB6R+6
+# 1LscxKgCtvHkGrNFm6klZur2Fq7j4liPmcxwzNM5EORwoMKwvmlm90Mb8E9seqUI
+# z/F2rD/yg1Hw+jbRKPoE1GA693KE6tgcTzkLJc3srhzFozhO8jRPWAUU/HMlr94O
+# PEgMdEYaHhXMHBuR3E3lRDvf2eSeuA4PcIpA12xvWxz/KirTz5or//w+YdWf3LJt
+# YMnZzx7VB2jnDUhJInCPgbaG6nap2tHv270pjDfzBITxDYAKyHwoQiby1Q2Rs85Y
+# f42MXc22A0+wTCMlcBQ+05FmYYbq46vvRSrF7up2k3eG1fWydXkWaTNyjtk11ANd
+# s1iwQxFW5KUWJpNK7DJyvfxCX7pE1fUySAo3QAFgwHse/GSXYn3lRNDcuH1pkdaA
+# n2hkrF/0/phOMPehgg8dMIIPGQYKKwYBBAGCNwMDATGCDwkwgg8FBgkqhkiG9w0B
+# BwKggg72MIIO8gIBAzENMAsGCWCGSAFlAwQCATB/BgsqhkiG9w0BCRABBKBwBG4w
+# bAIBAQYMKwYBBAGCqTABAwYBMDEwDQYJYIZIAWUDBAIBBQAEIMMSlykIkW7u6tcs
+# N6YAZXp8il4QxQhJtzdgQ99QH5bsAghe51F7YsnlmRgPMjAyNjA3MTYxMjU0NDVa
+# MAMCAQECBgGfav5nhaCCDAAwggT8MIIC5KADAgECAhAfaxZi0i4bbF3xwMGgYA44
 # MA0GCSqGSIb3DQEBCwUAMHMxCzAJBgNVBAYTAlVTMQ4wDAYDVQQIDAVUZXhhczEQ
 # MA4GA1UEBwwHSG91c3RvbjERMA8GA1UECgwIU1NMIENvcnAxLzAtBgNVBAMMJlNT
-# TC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIFIxMB4XDTI0MDIxOTE2
-# MTgxOVoXDTM0MDIxNjE2MTgxOFowbjELMAkGA1UEBhMCVVMxDjAMBgNVBAgMBVRl
+# TC5jb20gVGltZXN0YW1waW5nIElzc3VpbmcgUlNBIENBIFIxMB4XDTI1MDIxODE2
+# MzIwMloXDTM0MTExMjE4NTAwNVowbjELMAkGA1UEBhMCVVMxDjAMBgNVBAgMBVRl
 # eGFzMRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDEqMCgGA1UE
-# AwwhU1NMLmNvbSBUaW1lc3RhbXBpbmcgVW5pdCAyMDI0IEUxMFkwEwYHKoZIzj0C
-# AQYIKoZIzj0DAQcDQgAEp2Fy9TDpesSDFJYFQuPc6J3blG3ZMm9KYstovLdyZUBM
-# AO+HIyvIPZkQvBh9XAAFTCK/DNh3WaVYJFdS1wSwfKOCAVowggFWMB8GA1UdIwQY
+# AwwhU1NMLmNvbSBUaW1lc3RhbXBpbmcgVW5pdCAyMDI1IEUxMFkwEwYHKoZIzj0C
+# AQYIKoZIzj0DAQcDQgAEG/tRUcdv5lWW7E9eV8Tczq2DReerx2Jz47e884JGlqVQ
+# zW870D4ZHNJVWPLKAeFisHDrZcsWHWS/t77JF39pNqOCAVowggFWMB8GA1UdIwQY
 # MBaAFAydECWOmqcbmYdDzwh+4b2BkPTPMFEGCCsGAQUFBwEBBEUwQzBBBggrBgEF
 # BQcwAoY1aHR0cDovL2NlcnQuc3NsLmNvbS9TU0wuY29tLXRpbWVTdGFtcGluZy1J
 # LVJTQS1SMS5jZXIwUQYDVR0gBEowSDA8BgwrBgEEAYKpMAEDBgEwLDAqBggrBgEF
 # BQcCARYeaHR0cHM6Ly93d3cuc3NsLmNvbS9yZXBvc2l0b3J5MAgGBmeBDAEEAjAW
 # BgNVHSUBAf8EDDAKBggrBgEFBQcDCDBGBgNVHR8EPzA9MDugOaA3hjVodHRwOi8v
 # Y3Jscy5zc2wuY29tL1NTTC5jb20tdGltZVN0YW1waW5nLUktUlNBLVIxLmNybDAd
-# BgNVHQ4EFgQUUE8krO+1PmMTIwmSJuy6OpbkXSIwDgYDVR0PAQH/BAQDAgeAMA0G
-# CSqGSIb3DQEBCwUAA4ICAQCYoI8DAJG8q8RkQX9CIeK/q2wgee5U7sFYgupx9n2U
-# nIjKIKaks60nlWdniG+b4Y/a0+46ll2Z9NhZ3LOGE6wNUMsSVt+sowuI5ef27BQm
-# lrl8xl7dmOiH6f/wN2dLDUzFk0waG5nHjN7Kp6L3V/U6ERT/tva+ckJz3IEUyNj7
-# 61Uqi8WPRMpPf9HL4jN1tvWAZdPNBDW5UXLt2PEbH80bVU/9rJ7g6HEcb0WJndEz
-# 2jICI9sSCOudUJz6dYYqvcVNAMqLy827IucJUeSKeIv4vPsfh8GCTXrcuXGLXVie
-# 7kD+mGmbVv4zaB6e+qjX7avyJUsesRGAUYxQcR0qtn84VEOaAWsJNjrGdo9MDn+6
-# uwKowrerf/n25lo6wFmFmRo/0S45banRTwaSCqnYY1SMWhoM1YWhP8RygYOJOA3x
-# WZAWCfQVrj/d05vqWlgQ8FyOxYN2pRrG6BK1j1pb8DAJqXiVI3ii2WNuiTy7fWVn
-# Hk1VriMro3q6m+SDJnqiyZuYhav0MuGDxsj4qJcOcNZPTnjuBK5kthSr5NXo78OE
-# lkfktVclp5LWOONlmqErcQQglVmXTFhXgfhKS/LqEDatTIUrf7CFI1LnZMmSyGzF
-# UI4+2+oD15w+pkvBYFoggIbjNWv4YAPuqNbCVosx3ZnKWA4cjc6K3/SlUROoke63
-# JjCCBvwwggTkoAMCAQICEG1SGHCH6CNNhWAA0ICPk1YwDQYJKoZIhvcNAQELBQAw
+# BgNVHQ4EFgQUznzZwASAxSQQagnqHKslPRH9qNIwDgYDVR0PAQH/BAQDAgeAMA0G
+# CSqGSIb3DQEBCwUAA4ICAQCAc3Ukhb1mU2KnTsV9j2vUsnAspOXWH/L2vUGMOAcw
+# TPtTsnuYDLfYnEDUovKMIImo2S5F+EMcYUR9m2NM6u7sBAwNIOJQO8IJzeNrPmnL
+# 2Ma/Ah7memQttepeED5KoLMbvX1RKKDCEeRivu/w2JehpjRe7TenQGJlmt5mWmeC
+# YYH37zo33gWogXHYjlnmK67t3iPtoA5kE3F9T2MUMggYO1Z9Z4KkXRDyssT/cMcO
+# XMkqzkiXeL9Wg6XutNT3fyhKvEzDDDoYMGUpfysYfG+SOAhv0xeRWCUlIMew0BkN
+# 4JL+KdrEocD4KG4Hwrg7EjFrqTV754cHKlqQBjfC43vDs+U+aE3qTkh2pmfcdkez
+# ZWOhHzjVn3CZU8V0YN2QFntc6Zvk5lRoq5+y+0RHRVtjYOTNqoBoi23WRz4j4VTP
+# s+JXPY9TOl6CR+1FHG+s/IgvTxuUlOdsxDReuoM3SsR+5Mu/heGGcrIlpeHEJR2M
+# 79xG6YzNnflBNQwi0FbLXEanSLKgVWcDJrak+xUy4Aj6zLXPGU5L2XmJLG8onyCm
+# ek6COphNru7V7Jmj7gmVwaiKJHXsu2ExOsXWrra07nE6kjy3FRnqC0oa2QlXrB2P
+# 69ktzApnYz3capWk6jpQGUaPHWwqxVnsAhTMlmWLg0nQzYphyt82eV5uRgqkOdKp
+# bDCCBvwwggTkoAMCAQICEG1SGHCH6CNNhWAA0ICPk1YwDQYJKoZIhvcNAQELBQAw
 # fDELMAkGA1UEBhMCVVMxDjAMBgNVBAgMBVRleGFzMRAwDgYDVQQHDAdIb3VzdG9u
 # MRgwFgYDVQQKDA9TU0wgQ29ycG9yYXRpb24xMTAvBgNVBAMMKFNTTC5jb20gUm9v
 # dCBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eSBSU0EwHhcNMTkxMTEzMTg1MDA1WhcN
@@ -3973,17 +4007,17 @@ if ($PSCommandPath -like '*.ps1' -and $PSCommandPath -like "*$($MyInvocation.MyC
 # i0BwSuRm+HRYAEMMThTwbJX/fYV1oC8mBN970yIvadIGKhh7+DmYdRJYBrL8inVF
 # CZAK+YX2w1+qWEnCSPL/VTWJtSRMhQFfceDKbJC+pBNksvKzqkva0J1ZyMj1i4vD
 # fSuBmbz4rfzsvvJxS+quZDdkmW6MeXevWGBXvqzdbAw+AqTVsAQUyP6tFeKZIL4S
-# /fSFdl2rIx2X+KXkqx3S+EYxggJYMIICVAIBATCBhzBzMQswCQYDVQQGEwJVUzEO
+# /fSFdl2rIx2X+KXkqx3S+EYxggJXMIICUwIBATCBhzBzMQswCQYDVQQGEwJVUzEO
 # MAwGA1UECAwFVGV4YXMxEDAOBgNVBAcMB0hvdXN0b24xETAPBgNVBAoMCFNTTCBD
 # b3JwMS8wLQYDVQQDDCZTU0wuY29tIFRpbWVzdGFtcGluZyBJc3N1aW5nIFJTQSBD
-# QSBSMQIQWlqs6Bo1brRiho1XfeA9xzALBglghkgBZQMEAgGgggFhMBoGCSqGSIb3
-# DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjQwODMwMTQxMjUy
+# QSBSMQIQH2sWYtIuG2xd8cDBoGAOODALBglghkgBZQMEAgGgggFhMBoGCSqGSIb3
+# DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjYwNzE2MTI1NDQ1
 # WjAoBgkqhkiG9w0BCTQxGzAZMAsGCWCGSAFlAwQCAaEKBggqhkjOPQQDAjAvBgkq
-# hkiG9w0BCQQxIgQg82QYnHLTeYgEn5nj3x/O7c5fH2BQigjbXIJtCW+ORuwwgckG
-# CyqGSIb3DQEJEAIvMYG5MIG2MIGzMIGwBCCdcX+Nwjdlqs5eSrDh9XXXmhfUHO7Y
-# /a/vA/09vYlH5zCBizB3pHUwczELMAkGA1UEBhMCVVMxDjAMBgNVBAgMBVRleGFz
+# hkiG9w0BCQQxIgQgOP6y2wJ5MrKKnv0UtVm5i4S4xNpMxsrnwvcwpmumABIwgckG
+# CyqGSIb3DQEJEAIvMYG5MIG2MIGzMIGwBCBUKvmhao1yLmYRSXiK6ZTBipqu5aZc
+# s0SiVJr5bHnHizCBizB3pHUwczELMAkGA1UEBhMCVVMxDjAMBgNVBAgMBVRleGFz
 # MRAwDgYDVQQHDAdIb3VzdG9uMREwDwYDVQQKDAhTU0wgQ29ycDEvMC0GA1UEAwwm
-# U1NMLmNvbSBUaW1lc3RhbXBpbmcgSXNzdWluZyBSU0EgQ0EgUjECEFparOgaNW60
-# YoaNV33gPccwCgYIKoZIzj0EAwIERzBFAiAbPBUtNgSoIWn5I+0OO/g0enwRMGLb
-# ojUiNMtBEI2SBQIhAKRCV8XsHEkl88a6Ev57COqBxihkEiYqt8GZ1wVaf9z4
+# U1NMLmNvbSBUaW1lc3RhbXBpbmcgSXNzdWluZyBSU0EgQ0EgUjECEB9rFmLSLhts
+# XfHAwaBgDjgwCgYIKoZIzj0EAwIERjBEAiAbiQNYYKbc2vactaf2D1v0qfd/ZeGJ
+# 3+Jl6Q4V8vdKagIgZxwmMeIBKQXmCEScWQxCoe0ehqYGeqGdm7WSHV+ExYg=
 # SIG # End signature block
